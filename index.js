@@ -77,6 +77,18 @@ async function detect(domain) {
 
 /* ------------------------------------------------------------ enrichment */
 
+function extractRoomCount(text) {
+  if (!text) return null;
+  // Owners often state it outright: "the 15 room Snowy Mountain Inn",
+  // "30 room budget motel", "10 cabin units".
+  const m = String(text).match(
+    /\b(\d{1,3})[\s-]*(?:guest[\s-]*)?(?:room|unit|cabin|cottage|bungalow|villa|suite)s?\b/i
+  );
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 2 && n <= 500 ? n : null;
+}
+
 function pickLang(v) {
   if (Array.isArray(v)) return v[0]?.["@value"] ?? String(v[0] ?? "");
   if (v && typeof v === "object") return v["@value"] ?? "";
@@ -104,10 +116,14 @@ async function enrich(code) {
 
     const a = d.address || {};
     const rooms = (d.containsPlace || []).filter((r) => r["@type"] === "HotelRoom");
-    const amen = (d.amenityFeature || []).map((x) => pickLang(x.name));
+    const amen = (d.amenityFeature || []).map((x) => pickLang(x.name)).filter(Boolean);
+    const desc = String(pickLang(d.description) || "").replace(/\s+/g, " ").trim();
 
     return {
       cb_code: code,
+      description: desc.slice(0, 2000),
+      amenities: amen.join(" | "),
+      room_count: extractRoomCount(desc),
       name: d.name || "",
       phone: d.telephone || "",
       email: d.email || "",
@@ -152,6 +168,10 @@ async function ghlUpsert(env, p) {
     GHL_FIELD_TIER: tier(p),
     GHL_FIELD_CHECKIN: p.checkin,
     GHL_FIELD_ROOM_TYPES: p.room_types,
+    GHL_FIELD_ROOM_COUNT: p.room_count,
+    GHL_FIELD_DESCRIPTION: p.description,
+    GHL_FIELD_OWNER_NAME: p.owner_name,
+    GHL_FIELD_OWNER_LINKEDIN: p.owner_linkedin,
     GHL_FIELD_BOOKING_URL: `https://hotels.cloudbeds.com/reservation/${p.cb_code}`,
   };
   for (const [k, v] of Object.entries(map)) {
@@ -280,11 +300,22 @@ export default {
       });
     }
 
+    if (url.pathname === "/needs-enrichment") {
+      // Confirmed Cloudbeds properties with no owner attached yet.
+      // Feed this list to Clay - never enrich an unverified domain.
+      const { results } = await env.DB.prepare(
+        `SELECT cb_code, name, website, city, state FROM properties
+          WHERE country='US' AND owner_name IS NULL AND website != ''
+          ORDER BY found_at ASC`
+      ).all();
+      return Response.json({ count: results.length, properties: results });
+    }
+
     if (url.pathname === "/sync" && req.method === "POST") {
       return Response.json(await syncToGHL(env, Number(url.searchParams.get("limit")) || 80));
     }
 
-    return new Response("cb-worker: /seed /stats /export /sync /ghl/fields", { status: 200 });
+    return new Response("cb-worker: /seed /stats /export /sync /ghl/fields /needs-enrichment", { status: 200 });
   },
 
   /* Queue consumer — one message per domain. */
@@ -310,15 +341,18 @@ export default {
               `INSERT INTO properties
                  (cb_code,name,phone,email,website,street,city,state,zip,country,
                   checkin,checkout,room_types,room_type_count,has_24h_desk,lat,lng,
-                  source_domain,found_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                  description,amenities,room_count,source_domain,found_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                ON CONFLICT(cb_code) DO UPDATE SET
                  phone=excluded.phone, email=excluded.email, checkin=excluded.checkin,
-                 room_types=excluded.room_types, has_24h_desk=excluded.has_24h_desk`
+                 room_types=excluded.room_types, has_24h_desk=excluded.has_24h_desk,
+                 description=excluded.description, amenities=excluded.amenities,
+                 room_count=excluded.room_count`
             ).bind(
               p.cb_code, p.name, p.phone, p.email, p.website, p.street, p.city, p.state,
               p.zip, p.country, p.checkin, p.checkout, p.room_types, p.room_type_count,
-              p.has_24h_desk, p.lat, p.lng, hit.domain
+              p.has_24h_desk, p.lat, p.lng, p.description, p.amenities, p.room_count,
+              hit.domain
             ).run();
           }
         }
