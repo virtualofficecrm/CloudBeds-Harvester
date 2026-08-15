@@ -1,0 +1,31 @@
+name = "cloudbeds-harvester"
+main = "index.js"
+compatibility_date = "2026-08-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudbeds"
+database_id = "9ec2d186-b334-47ec-8b8a-1ffef9ff6b60"
+
+[[queues.producers]]
+binding = "SCAN_QUEUE"
+queue = "cb-scan"
+
+[[queues.consumers]]
+queue = "cb-scan"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+max_concurrency = 3
+dead_letter_queue = "cb-scan-dlq"
+
+[triggers]
+crons = ["0 7 * * *"]
+
+[vars]
+GHL_LOCATION_ID = "REPLACE_WITH_YOUR_LOCATION_ID"
+GHL_FIELD_CB_CODE     = ""
+GHL_FIELD_TIER        = ""
+GHL_FIELD_CHECKIN     = ""
+GHL_FIELD_ROOM_TYPES  = ""
+GHL_FIELD_BOOKING_URL = ""
