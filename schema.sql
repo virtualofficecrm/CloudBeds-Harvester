@@ -22,6 +22,17 @@ CREATE TABLE IF NOT EXISTS properties (
   has_24h_desk    INTEGER DEFAULT 0,
   lat             REAL,
   lng             REAL,
+  description     TEXT,
+  amenities       TEXT,
+  room_count      INTEGER,
+  owner_name      TEXT,
+  owner_title     TEXT,
+  owner_linkedin  TEXT,
+  owner_email     TEXT,
+  company_linkedin TEXT,
+  employee_count  INTEGER,
+  entity_name     TEXT,
+  enriched_at     TEXT,
   source_domain   TEXT,
   found_at        TEXT,
   synced_at       TEXT,
@@ -31,3 +42,17 @@ CREATE TABLE IF NOT EXISTS properties (
 CREATE INDEX IF NOT EXISTS idx_prop_country ON properties(country);
 CREATE INDEX IF NOT EXISTS idx_prop_sync    ON properties(synced_at);
 CREATE INDEX IF NOT EXISTS idx_checked_cb   ON checked(is_cloudbeds);
+
+CREATE TABLE IF NOT EXISTS cc_codes (
+  cb_code     TEXT PRIMARY KEY,
+  crawl       TEXT,
+  seen_at     TEXT,
+  status      TEXT,          -- NULL pending | us | non-us | no-jsonld | known
+  enriched_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cc_status ON cc_codes(status);
+
+CREATE TABLE IF NOT EXISTS exclusions (
+  key      TEXT PRIMARY KEY,  -- code:XXXXXX | email:x@y | phone:10digits | host:example.com
+  added_at TEXT
+);

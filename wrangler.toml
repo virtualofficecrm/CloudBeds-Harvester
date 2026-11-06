@@ -1,6 +1,7 @@
 name = "cloudbeds-harvester"
 main = "index.js"
 compatibility_date = "2026-08-01"
+preview_urls = false
 
 [[d1_databases]]
 binding = "DB"
@@ -20,12 +21,21 @@ max_concurrency = 3
 dead_letter_queue = "cb-scan-dlq"
 
 [triggers]
-crons = ["0 7 * * *"]
+# Nightly GHL sync paused 2026-08-16 per Chris — nothing auto-pushes to GHL.
+# Re-enable with: crons = ["0 7 * * *"]
+crons = []
 
 [vars]
-GHL_LOCATION_ID = "REPLACE_WITH_YOUR_LOCATION_ID"
-GHL_FIELD_CB_CODE     = ""
-GHL_FIELD_TIER        = ""
-GHL_FIELD_CHECKIN     = ""
-GHL_FIELD_ROOM_TYPES  = ""
-GHL_FIELD_BOOKING_URL = ""
+GHL_LOCATION_ID = "BERHSQxYZiY2K2G7TJwC"
+GHL_FIELD_CB_CODE        = "0lFRh0jKhEN5I1AxiEvl"
+GHL_FIELD_TIER           = "KrG4yO8LfTxPkQx25jpY"
+GHL_FIELD_CHECKIN        = "PvGsWUA9jHxf2WEgmacV"
+GHL_FIELD_ROOM_TYPES     = "qr1h1AQqUzy0redAclQw"
+GHL_FIELD_ROOM_COUNT     = "Pg0h0zTf2sXhX0SyGD6B"
+GHL_FIELD_DESCRIPTION    = "fmh0ATq3HLptmsZH2z8j"
+GHL_FIELD_BOOKING_URL    = "UvvRfRxbgktFyAg8yJi2"
+GHL_FIELD_OWNER_NAME     = "QyKmFYFqlBNFwLEVBWOv"
+GHL_FIELD_OWNER_LINKEDIN = "kIVKlAh9ZxUOMXnJFmH7"
+# Written by the hook/subject generator, not the sync:
+# Email Subject = daMz4MOar6EvTjjWwMac (contact.email_subject)
+# Personal Hook = 5XD9cZaQDJxB7IrDzWAa (contact.personal_hook)

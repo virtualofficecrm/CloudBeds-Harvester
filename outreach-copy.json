@@ -1,0 +1,45 @@
+{
+  "version": "v1",
+  "comment": "All outreach verbiage, every message in the sequence. The field writer / worker reads this and injects values into GHL contact custom fields; the GHL template is a fixed shell that is never edited. {name} is replaced with the shortened property name, {first_name} with the owner's first name. Style rules: no em-dashes, no percentage figures, no fee/free language.",
+  "greeting": {
+    "with_name": "Hi {first_name},",
+    "fallback": "Hi there,"
+  },
+  "message_1": {
+    "main": {
+      "applies_to": "contacts WITHOUT the has-24h-desk tag",
+      "subjects": [
+        "after-hours calls at {name}",
+        "your Cloudbeds + the 9pm phone calls",
+        "quick question about {name}"
+      ],
+      "email_body_1": "I run an automation company, and I built a voice assistant for another Cloudbeds property that answers their phone after hours. It connects directly to their Cloudbeds, so it checks live availability, quotes real rates, answers questions about the rooms, and books the reservation with the Cloudbeds payment link. A guest who can't reach you at 9pm opens Booking.com and rebooks, and the OTA takes its cut of a booking that was already yours.",
+      "email_body_2": "I'm taking on five more Cloudbeds properties as pilot partners. I handle the setup, you try it in your business, and if it earns its keep, we talk about keeping it.",
+      "email_body_3": "Worth a 15-minute call?"
+    },
+    "desk": {
+      "applies_to": "contacts WITH the has-24h-desk tag (amenity is ambiguous: staffed desk, kiosk, or stale checkbox, so this copy assumes no staffing model)",
+      "subjects": [
+        "missed calls at {name}",
+        "when the line's busy at {name}",
+        "quick question about {name}"
+      ],
+      "email_body_1": "I run an automation company, and I built a voice assistant for another Cloudbeds property that answers whenever a human can't get to the phone: a busy line, the middle of a check-in, or overnight if the desk runs unstaffed. It connects directly to their Cloudbeds, so it checks live availability, quotes real rates, answers questions about the rooms, and books the reservation with the Cloudbeds payment link. Every call it catches is a direct booking that would otherwise drift to an OTA.",
+      "email_body_2": "I'm taking on five more Cloudbeds properties as pilot partners. I handle the setup, you try it in your business, and if it earns its keep, we talk about keeping it.",
+      "email_body_3": "Worth a 15-minute call?"
+    }
+  },
+  "message_2": {
+    "all": {
+      "applies_to": "both segments, 4 days after message 1 with no reply",
+      "subjects": [
+        "following up for {name}",
+        "one more thought for {name}"
+      ],
+      "personal_hook": "Following up on my note from last week in case it got buried.",
+      "email_body_1": "One thing I did not say clearly: this is not an answering service that takes messages. It talks to the guest, checks your live availability in Cloudbeds, quotes your actual rates, and completes the booking with your payment link. The reservation is finished before you even hear about it, and it hands the caller to a human whenever they ask.",
+      "email_body_2": "I still have room for a couple more pilot properties. If the timing is wrong, a one-line reply saying so is genuinely useful.",
+      "email_body_3": "Open to a quick call this week?"
+    }
+  }
+}
