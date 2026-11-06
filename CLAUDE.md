@@ -281,8 +281,15 @@ GET /cc/export            -> CSV of new US properties minus exclusions, for manu
 | `POST /cc/harvest?crawls=N` | Queue the newest N crawls (1-12, default 3) |
 | `GET /cc/stats` | cc_codes by status: pending, us, non-us, no-jsonld, known |
 | `GET /cc/export` | GHL-ready CSV (state codes, first_name "there" when no owner) |
+| `POST /cc/codes?source=&delay=` | Up to 100 codes per request, collected off-worker; pass back `next_delay` to keep one rate across requests |
 | `POST /exclude` | Newline list of codes, emails, phones or websites never exported/synced |
 
+- **Common Crawl was unusable on 2026-11-05.** From the worker, `collinfo.json`
+  returned 521 on every attempt while the same URL returned 200 locally (cause
+  unknown), and index queries often returned 504 from anywhere. Wayback Machine
+  CDX worked as the source: fetch codes locally, load them via `/cc/codes`.
+  Those rows still use `source_domain='commoncrawl'` and the `source-commoncrawl`
+  tag; `cc_codes.crawl` holds the real source (`wayback`).
 - `/sync` stays hard-disabled. Import the CSV by hand. If sync is ever
   re-enabled, it also skips exclusions and tags `source-commoncrawl`.
 - Load existing outreach contacts and Snowy Mountain Inn into `/exclude`

@@ -97,4 +97,38 @@ const lines = csv.trim().split("\n");
 assert.equal(lines.length, 2, csv);
 assert.ok(lines[1].includes("Pine Motel") && lines[1].includes('"WY"') && lines[1].includes('"there"'));
 assert.ok(!csv.includes("Snowy") && !csv.includes("Lisboa"));
+
+/* --- POST /cc/codes: load codes collected off-worker (e.g. Wayback Machine) --- */
+pages.WbCod1 = ldjson("Wayback Lodge", "US", "wb1@gmail.com", "(307) 555-0111");
+pages.WbCod2 = ldjson("Wayback Inn", "US", "wb2@gmail.com", "(307) 555-0122");
+pages.WbCod3 = ldjson("Scanner Motel", "US", "wb3@gmail.com", "(307) 555-0133");
+sql.prepare(`INSERT INTO properties (cb_code, name, source_domain) VALUES ('WbCod3', 'Scanner Motel', 'scanner.example')`).run();
+
+// Junk is dropped, codes seen before are not re-queued, known properties are not re-fetched.
+const up = await call("/cc/codes?delay=100&source=wayback", "POST", "WbCod1\nWbCod2\nWbCod3\nAbC123\nnot-a-code\nTOOLONG1\n\nWbCod1");
+assert.deepEqual(up, { received: 4, fresh: 3, known: 1, queued: 2, next_delay: 104 });
+assert.deepEqual(sent.map((m) => [m.body.type, m.body.cb_code, m.delaySeconds]), [
+  ["cc-code", "WbCod1", 100],
+  ["cc-code", "WbCod2", 102],
+]);
+assert.equal(sql.prepare(`SELECT crawl FROM cc_codes WHERE cb_code='WbCod1'`).get().crawl, "wayback");
+await drain();
+assert.equal((await call("/cc/stats")).known, 1);
+
+// Re-upload is idempotent.
+assert.deepEqual(await call("/cc/codes", "POST", "WbCod1\nWbCod2"), { received: 2, fresh: 0, known: 0, queued: 0, next_delay: 0 });
+assert.equal(sent.length, 0);
+
+// One request stays under the Workers subrequest limit.
+const big = Array.from({ length: 101 }, (_, i) => "Zz" + String(i).padStart(4, "0")).join("\n");
+const tooBig = await worker.fetch(new Request("https://w/cc/codes", { method: "POST", body: big }), env);
+assert.equal(tooBig.status, 413);
+assert.equal(sent.length, 0);
+
+// Uploaded properties export like any other; exclusions still win; sync still off.
+const csv2 = await (await worker.fetch(new Request("https://w/cc/export"), env)).text();
+assert.ok(csv2.includes("Wayback Lodge") && csv2.includes("Wayback Inn"));
+assert.ok(!csv2.includes("Snowy") && !csv2.includes("Scanner Motel"));
+assert.equal((await worker.fetch(new Request("https://w/sync", { method: "POST" }), env)).status, 403);
+assert.equal(ghlCalls.length, 0);
 console.log("all tests passed");

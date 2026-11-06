@@ -10,7 +10,7 @@
  *   GET  /ghl/fields  -> list your GHL custom field IDs (run once during setup)
  */
 
-import { startHarvest, handlePage, handleCode } from "./commoncrawl.js";
+import { startHarvest, handlePage, handleCode, ingestCodes, parseCodeList, MAX_CODES_PER_UPLOAD } from "./commoncrawl.js";
 
 const UA = "Mozilla/5.0 (compatible; property-research/1.0; +contact@yourdomain.com)";
 const PATHS = ["", "/book", "/booking", "/reservations", "/reserve", "/rooms", "/accommodations"];
@@ -479,6 +479,18 @@ export default {
       return Response.json(await startHarvest(env, n));
     }
 
+    if (url.pathname === "/cc/codes" && req.method === "POST") {
+      // Body: newline/comma list of codes collected off-worker (Wayback Machine).
+      // ?delay= is the previous response's next_delay, so uploads keep one rate.
+      const codes = parseCodeList(await req.text());
+      if (codes.length > MAX_CODES_PER_UPLOAD) {
+        return Response.json({ error: `max ${MAX_CODES_PER_UPLOAD} codes per request` }, { status: 413 });
+      }
+      const source = url.searchParams.get("source") || "upload";
+      const delay = Math.max(Number(url.searchParams.get("delay")) || 0, 0);
+      return Response.json(await ingestCodes(env, codes, source, delay));
+    }
+
     if (url.pathname === "/cc/stats") {
       const { results } = await env.DB.prepare(
         `SELECT COALESCE(status,'pending') status, COUNT(*) n FROM cc_codes GROUP BY 1`
@@ -536,7 +548,7 @@ export default {
       // return Response.json(await syncToGHL(env, Number(url.searchParams.get("limit")) || 80));
     }
 
-    return new Response("cb-worker: /dashboard /seed /stats /export /sync /ghl/fields /needs-enrichment /cc/harvest /cc/stats /cc/export /exclude", { status: 200 });
+    return new Response("cb-worker: /dashboard /seed /stats /export /sync /ghl/fields /needs-enrichment /cc/harvest /cc/codes /cc/stats /cc/export /exclude", { status: 200 });
   },
 
   /* Queue consumer. Message types:

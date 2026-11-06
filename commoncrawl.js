@@ -24,6 +24,10 @@ const CC_UA = "property-research/1.0 (+https://vofficeai.com)";
 export const CC_CODE_RE =
   /^https?:\/\/(?:[a-z0-9-]+\.)?cloudbeds\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?reservation\/([A-Za-z0-9]{6})(?:[\/?#]|$)/i;
 
+const ENRICH_SPACING_S = 2;      // about one booking-page fetch per 2 seconds
+const MAX_QUEUE_DELAY_S = 43200; // Queues caps delaySeconds at 12h
+export const MAX_CODES_PER_UPLOAD = 100; // keeps one request under the subrequest limit
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function ccFetch(url) {
@@ -105,12 +109,20 @@ export async function handlePage(env, { crawl, page }) {
   await sleep(1100);
   const codes = extractCodes(txt);
   if (!codes.length) return 0;
+  return (await ingestCodes(env, codes, crawl)).queued;
+}
 
+/**
+ * Record codes in cc_codes and queue enrichment for the new ones. `source` is
+ * the crawl ID, or e.g. "wayback" for codes uploaded through POST /cc/codes.
+ * `startDelay` lets a multi-request upload keep one steady rate across requests.
+ */
+export async function ingestCodes(env, codes, source, startDelay = 0) {
   const fresh = [];
   for (const code of codes) {
     const r = await env.DB.prepare(
       `INSERT OR IGNORE INTO cc_codes (cb_code, crawl, seen_at) VALUES (?, ?, datetime('now'))`
-    ).bind(code, crawl).run();
+    ).bind(code, source).run();
     if (r.meta?.changes) fresh.push(code);
   }
 
@@ -126,15 +138,27 @@ export async function handlePage(env, { crawl, page }) {
   }
 
   // Spread enrichment so hotels.cloudbeds.com sees a gentle, steady rate.
+  const delayFor = (n) => Math.min(startDelay + n * ENRICH_SPACING_S, MAX_QUEUE_DELAY_S);
   for (let i = 0; i < todo.length; i += 100) {
     await env.SCAN_QUEUE.sendBatch(
       todo.slice(i, i + 100).map((cb_code, j) => ({
         body: { type: "cc-code", cb_code },
-        delaySeconds: Math.min(j * 2, 43200),
+        delaySeconds: delayFor(i + j),
       }))
     );
   }
-  return todo.length;
+  return {
+    received: codes.length,
+    fresh: fresh.length,
+    known: fresh.length - todo.length,
+    queued: todo.length,
+    next_delay: todo.length ? delayFor(todo.length) : startDelay,
+  };
+}
+
+/** Pure: unique, valid property codes from a newline/comma separated body. */
+export function parseCodeList(text) {
+  return [...new Set(String(text).split(/[\n,]/).map((s) => s.trim()).filter((s) => /^[A-Za-z0-9]{6}$/.test(s)))];
 }
 
 /** Consumer for one code: enrich and store. `enrich` and `saveProperty` come from index.js. */
