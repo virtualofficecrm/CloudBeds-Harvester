@@ -39,6 +39,11 @@ const GHL_VERSION = "2021-07-28";
 /* ---------------------------------------------------------------- helpers */
 
 async function fetchText(url, ms = 12000) {
+  return (await fetchPage(url, ms)).html;
+}
+
+/** { status, html }. status is 0 on timeout or network error; html is "" unless 2xx. */
+async function fetchPage(url, ms = 12000) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
   try {
@@ -46,11 +51,12 @@ async function fetchText(url, ms = 12000) {
       headers: { "User-Agent": UA, Accept: "text/html" },
       signal: ctl.signal,
       redirect: "follow",
-      cf: { cacheTtl: 3600, cacheEverything: true },
+      // Errors must not be cached, or a retry just replays the same failure.
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 3600, "300-599": 0 } },
     });
-    return r.ok ? await r.text() : "";
+    return { status: r.status, html: r.ok ? await r.text() : "" };
   } catch {
-    return "";
+    return { status: 0, html: "" };
   } finally {
     clearTimeout(t);
   }
@@ -124,8 +130,13 @@ function pickLang(v) {
   return v ?? "";
 }
 
-async function enrich(code) {
-  const html = await fetchText(`https://hotels.cloudbeds.com/en/reservation/${code}`);
+// strict: throw on a failed fetch (so the queue retries it) instead of returning
+// null, which callers read as "page has no data". A 404/410 is a real answer.
+async function enrich(code, { strict = false } = {}) {
+  const { status, html } = await fetchPage(`https://hotels.cloudbeds.com/en/reservation/${code}`);
+  if (strict && !html && status !== 404 && status !== 410) {
+    throw new Error(`booking page returned ${status} for ${code}`);
+  }
   if (!html) return null;
 
   const blocks = [];
@@ -207,12 +218,19 @@ function host(u) {
 }
 const digits = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 
+// Many properties list their Cloudbeds booking page as their website. That host
+// is shared by every customer, so it can never identify one property.
+function exclusionHost(u) {
+  const h = host(u);
+  return /(^|\.)cloudbeds\.com$/.test(h) ? "" : h;
+}
+
 async function isExcluded(env, p) {
   const keys = [
     p.cb_code && `code:${p.cb_code}`,
     p.email && `email:${p.email.toLowerCase()}`,
     digits(p.phone).length === 10 && `phone:${digits(p.phone)}`,
-    host(p.website) && `host:${host(p.website)}`,
+    exclusionHost(p.website) && `host:${exclusionHost(p.website)}`,
   ].filter(Boolean);
   if (!keys.length) return false;
   const r = await env.DB.prepare(
@@ -227,7 +245,7 @@ function exclusionKey(v) {
   if (/^[A-Za-z0-9]{6}$/.test(v)) return `code:${v}`;
   if (v.includes("@")) return `email:${v.toLowerCase()}`;
   if (digits(v).length === 10 && !/[a-z]/i.test(v)) return `phone:${digits(v)}`;
-  const h = host(v);
+  const h = exclusionHost(v);
   return h ? `host:${h}` : "";
 }
 
@@ -488,7 +506,8 @@ export default {
       }
       const source = url.searchParams.get("source") || "upload";
       const delay = Math.max(Number(url.searchParams.get("delay")) || 0, 0);
-      return Response.json(await ingestCodes(env, codes, source, delay));
+      const retry = url.searchParams.get("retry") === "1";
+      return Response.json(await ingestCodes(env, codes, source, delay, retry));
     }
 
     if (url.pathname === "/cc/stats") {

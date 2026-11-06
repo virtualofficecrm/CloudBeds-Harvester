@@ -37,8 +37,8 @@ const sent = [];
 const env = { DB, SCAN_QUEUE: { sendBatch: async (m) => sent.push(...m) }, GHL_LOCATION_ID: "loc", GHL_TOKEN: "t" };
 
 /* --- fake network --- */
-const ldjson = (name, country, email, phone) => `<script type="application/ld+json">${JSON.stringify({
-  "@type": "LodgingBusiness", name, email, telephone: phone,
+const ldjson = (name, country, email, phone, url) => `<script type="application/ld+json">${JSON.stringify({
+  "@type": "LodgingBusiness", name, email, telephone: phone, url,
   address: { addressCountry: country, addressRegion: "WY", addressLocality: "Saratoga" },
   description: `The 15 room ${name}`, containsPlace: [{ "@type": "HotelRoom", name: "Queen" }],
 })}</script>`;
@@ -48,6 +48,7 @@ const pages = {
   Qq11Rr: ldjson("Snowy Mountain Inn", "US", "owner@snowy.com", "307-555-0199"),
 };
 const ghlCalls = [];
+const statuses = {}; // code -> forced HTTP status for its booking page
 globalThis.fetch = async (url, opts = {}) => {
   url = String(url);
   const ok = (t) => new Response(t, { status: 200 });
@@ -60,6 +61,7 @@ globalThis.fetch = async (url, opts = {}) => {
     return ok(sample);
   }
   const m = url.match(/reservation\/(\w{6})$/);
+  if (m && statuses[m[1]]) return new Response("", { status: statuses[m[1]] });
   if (m) return ok(pages[m[1]] || "");
   if (url.includes("/contacts/upsert")) { ghlCalls.push(JSON.parse(opts.body)); return ok('{"contact":{}}'); }
   throw new Error("unexpected fetch " + url);
@@ -99,7 +101,7 @@ assert.ok(lines[1].includes("Pine Motel") && lines[1].includes('"WY"') && lines[
 assert.ok(!csv.includes("Snowy") && !csv.includes("Lisboa"));
 
 /* --- POST /cc/codes: load codes collected off-worker (e.g. Wayback Machine) --- */
-pages.WbCod1 = ldjson("Wayback Lodge", "US", "wb1@gmail.com", "(307) 555-0111");
+pages.WbCod1 = ldjson("Wayback Lodge", "US", "wb1@gmail.com", "(307) 555-0111", "https://hotels.cloudbeds.com/en/reservation/WbCod1");
 pages.WbCod2 = ldjson("Wayback Inn", "US", "wb2@gmail.com", "(307) 555-0122");
 pages.WbCod3 = ldjson("Scanner Motel", "US", "wb3@gmail.com", "(307) 555-0133");
 sql.prepare(`INSERT INTO properties (cb_code, name, source_domain) VALUES ('WbCod3', 'Scanner Motel', 'scanner.example')`).run();
@@ -131,4 +133,41 @@ assert.ok(csv2.includes("Wayback Lodge") && csv2.includes("Wayback Inn"));
 assert.ok(!csv2.includes("Snowy") && !csv2.includes("Scanner Motel"));
 assert.equal((await worker.fetch(new Request("https://w/sync", { method: "POST" }), env)).status, 403);
 assert.equal(ghlCalls.length, 0);
+
+/* --- a Cloudbeds-hosted "website" must never exclude other properties --- */
+assert.ok(sql.prepare(`SELECT website FROM properties WHERE cb_code='WbCod1'`).get().website.includes("cloudbeds.com"));
+// Exactly what the runbook's script loaded: stale row must be ignored...
+sql.prepare(`INSERT INTO exclusions (key, added_at) VALUES ('host:hotels.cloudbeds.com', 'x')`).run();
+// ...and new uploads of such URLs must not add one, while real hosts still do.
+assert.deepEqual(
+  await call("/exclude", "POST", "https://us2.cloudbeds.com/reservation/WbCod9\nhttps://uticaproperties.cloudbeds.com/x\nhttps://realhotel.example/"),
+  { added: 1 }
+);
+const csv3 = await (await worker.fetch(new Request("https://w/cc/export"), env)).text();
+assert.ok(csv3.includes("Wayback Lodge"), "cloudbeds host wrongly excluded a property");
+assert.ok(!csv3.includes("Snowy"), "real exclusions still apply");
+
+/* --- failed fetches stay retryable; only a real 404 means the page is gone --- */
+pages.Tr4ns1 = ldjson("Flaky Lodge", "US", "flaky@gmail.com", "(307) 555-0144");
+statuses.Tr4ns1 = 503;
+statuses.De4d01 = 404;
+await call("/cc/codes?source=wayback", "POST", "Tr4ns1\nDe4d01");
+const retried = [];
+const msgs = sent.splice(0).map((m) => ({ body: m.body, ack() {}, retry() { retried.push(m.body.cb_code); } }));
+await worker.queue({ messages: msgs }, env);
+assert.deepEqual(retried, ["Tr4ns1"]);
+const st = (c) => sql.prepare(`SELECT status FROM cc_codes WHERE cb_code=?`).get(c).status;
+assert.equal(st("Tr4ns1"), null, "transient failure must stay pending");
+assert.equal(st("De4d01"), "no-jsonld");
+
+// ?retry=1 re-queues pending and no-jsonld codes, never finished ones; plain upload does not.
+delete statuses.Tr4ns1;
+assert.equal((await call("/cc/codes", "POST", "Tr4ns1\nDe4d01\nWbCod1")).queued, 0);
+const re = await call("/cc/codes?retry=1", "POST", "Tr4ns1\nDe4d01\nWbCod1");
+assert.equal(re.queued, 2);
+assert.deepEqual(sent.map((m) => m.body.cb_code).sort(), ["De4d01", "Tr4ns1"]);
+const msgs2 = sent.splice(0).map((m) => ({ body: m.body, ack() {}, retry() { throw new Error("retry"); } }));
+await worker.queue({ messages: msgs2 }, env);
+assert.equal(st("Tr4ns1"), "us");
+assert.equal(st("De4d01"), "no-jsonld");
 console.log("all tests passed");

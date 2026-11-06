@@ -116,14 +116,21 @@ export async function handlePage(env, { crawl, page }) {
  * Record codes in cc_codes and queue enrichment for the new ones. `source` is
  * the crawl ID, or e.g. "wayback" for codes uploaded through POST /cc/codes.
  * `startDelay` lets a multi-request upload keep one steady rate across requests.
+ * `retry` also re-queues codes already seen that are pending or marked no-jsonld.
  */
-export async function ingestCodes(env, codes, source, startDelay = 0) {
+export async function ingestCodes(env, codes, source, startDelay = 0, retry = false) {
   const fresh = [];
+  const requeue = [];
   for (const code of codes) {
     const r = await env.DB.prepare(
       `INSERT OR IGNORE INTO cc_codes (cb_code, crawl, seen_at) VALUES (?, ?, datetime('now'))`
     ).bind(code, source).run();
-    if (r.meta?.changes) fresh.push(code);
+    if (r.meta?.changes) {
+      fresh.push(code);
+    } else if (retry) {
+      const row = await env.DB.prepare(`SELECT status FROM cc_codes WHERE cb_code = ?`).bind(code).first();
+      if (row && (row.status === null || row.status === "no-jsonld")) requeue.push(code);
+    }
   }
 
   // Codes already in properties (from the domain scanner) need no re-fetch.
@@ -136,6 +143,8 @@ export async function ingestCodes(env, codes, source, startDelay = 0) {
       todo.push(code);
     }
   }
+  const known = fresh.length - todo.length;
+  todo.push(...requeue);
 
   // Spread enrichment so hotels.cloudbeds.com sees a gentle, steady rate.
   const delayFor = (n) => Math.min(startDelay + n * ENRICH_SPACING_S, MAX_QUEUE_DELAY_S);
@@ -150,7 +159,7 @@ export async function ingestCodes(env, codes, source, startDelay = 0) {
   return {
     received: codes.length,
     fresh: fresh.length,
-    known: fresh.length - todo.length,
+    known,
     queued: todo.length,
     next_delay: todo.length ? delayFor(todo.length) : startDelay,
   };
@@ -163,7 +172,7 @@ export function parseCodeList(text) {
 
 /** Consumer for one code: enrich and store. `enrich` and `saveProperty` come from index.js. */
 export async function handleCode(env, { cb_code }, enrich, saveProperty) {
-  const p = await enrich(cb_code);
+  const p = await enrich(cb_code, { strict: true }); // a failed fetch throws, so the queue retries
   const status = !p ? "no-jsonld" : p.country === "US" ? "us" : "non-us";
   if (p) await saveProperty(env, p, "commoncrawl");
   await env.DB.prepare(
