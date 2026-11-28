@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "ClaudeInChromeDomain(mail.google.com)"
+    ],
+    "additionalDirectories": [
+      "/Users/chrisrusso/VisuralStudioProjects/LodgingNet-App/marketing",
+      "/Users/chrisrusso/VisuralStudioProjects/LodgingNet-App/app/src/site"
+    ]
+  }
+}
